@@ -4,6 +4,7 @@ import os
 from discord.ext import commands, tasks
 import tweepy
 from dotenv import load_dotenv
+import itertools
 
 # Load environment variables
 load_dotenv()
@@ -78,38 +79,52 @@ async def monitor(ctx, url: str):
         await ctx.send("Invalid URL. Please provide a valid Twitter thread link.")
         print(f"Error parsing URL: {e}")
 
-
+# Define trigger words that indicate the thread has ended
 END_WORDS = {"end", "completed", "complete", "finished", "done"}
+
+# Iterator to cycle through monitored threads
+thread_iterator = itertools.cycle([])
 
 # Task: Poll Twitter for thread updates
 @tasks.loop(minutes=15)  # Run every 15 minutes to avoid API rate limits
 async def check_threads():
+    global thread_iterator
+
     if not threads_to_monitor:
         print("No threads to check.")
         return
 
+
     try:
-        for conversation_id, user_id in list(threads_to_monitor.items()):
-            print(f"Checking thread with conversation ID: {conversation_id}")
+        # Get the next thread to check
+        conversation_id, user_id = next(thread_iterator, (None, None))
+        
+        if conversation_id is None:
+            print("No more threads to check, resetting iterator.")
+            thread_iterator = itertools.cycle(list(threads_to_monitor.items()))
+            return
 
-            # Fetch all tweets in the thread using conversation_id
-            response = client.search_recent_tweets(
-                query=f"conversation_id:{conversation_id}",
-                tweet_fields=["text"]
-            )
+        print(f"Checking thread with conversation ID: {conversation_id}")
 
-            if response.data:
-                for tweet in response.data:
-                    tweet_text = tweet.text.lower()  # Convert text to lowercase
-                    if any(word in tweet_text for word in END_WORDS):
-                        user = await bot.fetch_user(user_id)
-                        await user.send(f"The thread you are monitoring has ended! 🎉\nhttps://twitter.com/i/status/{conversation_id}")
-                        del threads_to_monitor[conversation_id]  # Remove thread after completion
-                        save_threads()  # Save to JSON after update
-                        break  # Stop processing once thread is marked complete
+        # Fetch all tweets in the thread using conversation_id
+        response = client.search_recent_tweets(
+            query=f"conversation_id:{conversation_id}",
+            tweet_fields=["text"]
+        )
 
-            else:
-                print(f"No 'END' found in thread with ID {conversation_id}")
+        if response.data:
+            for tweet in response.data:
+                tweet_text = tweet.text.lower()  # Convert text to lowercase
+                if any(word in tweet_text for word in END_WORDS):
+                    user = await bot.fetch_user(user_id)
+                    await user.send(f"The thread you are monitoring has ended! 🎉\nhttps://twitter.com/i/status/{conversation_id}")
+                    del threads_to_monitor[conversation_id]  # Stop monitoring
+                    save_threads()  # Save changes
+                    thread_iterator = itertools.cycle(list(threads_to_monitor.items()))  # Reset iterator
+                    break  # Stop processing once thread is marked complete
+
+        else:
+            print(f"No end words found in thread {conversation_id} yet.")
 
     except Exception as e:
         print(f"Error checking thread: {e}")
