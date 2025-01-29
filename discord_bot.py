@@ -78,6 +78,9 @@ async def monitor(ctx, url: str):
         await ctx.send("Invalid URL. Please provide a valid Twitter thread link.")
         print(f"Error parsing URL: {e}")
 
+
+END_WORDS = {"end", "completed", "complete", "finished", "done"}
+
 # Task: Poll Twitter for thread updates
 @tasks.loop(minutes=15)  # Run every 15 minutes to avoid API rate limits
 async def check_threads():
@@ -97,7 +100,8 @@ async def check_threads():
 
             if response.data:
                 for tweet in response.data:
-                    if "END" in tweet.text.upper():
+                    tweet_text = tweet.text.lower()  # Convert text to lowercase
+                    if any(word in tweet_text for word in END_WORDS):
                         user = await bot.fetch_user(user_id)
                         await user.send(f"The thread you are monitoring has ended! 🎉\nhttps://twitter.com/i/status/{conversation_id}")
                         del threads_to_monitor[conversation_id]  # Remove thread after completion
